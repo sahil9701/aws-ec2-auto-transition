@@ -2,9 +2,12 @@ import boto3
 import json
 import time
 import logging
-logging.basicConfig(level=logging.DEBUG)
-LOGGER=logging.getLogger(__name__)
 
+LOGGER=logging.getLogger()
+if LOGGER.handlers:
+    for handler in LOGGER.handlers:
+        LOGGER.removeHandler(handler)
+logging.basicConfig(level=logging.INFO)
 with open('instancetypes.json') as f:
     instance_database=json.load(f)
 ec2=boto3.resource('ec2')
@@ -109,7 +112,7 @@ def enable_alarm(alarm_name,threshold,instance_id,arn,comparison_operator):
     return response
 
     #turn on health check on the new instance
-def main(event):
+def main(event,context):
 
     LOGGER.info('Fetching Instance ID and CPU utilization from lambda trigger')
     current_utilization=json.loads(event['Records'][0]['Sns']['Message'])['NewStateReason']
@@ -131,23 +134,23 @@ def main(event):
     higher_range=(instance_memory*current_utilization)/25
     if higher_range<512:
         higher_range=514
-    LOGGER.debug(f'Instance {old_instance_id} and {old_instance_type} has {current_utilization}% of CPU utilization')
+    LOGGER.info(f'Instance {old_instance_id} and {old_instance_type} has {current_utilization}% of CPU utilization')
     new_instance_type= ec2_algorithm(old_instance_type, instance_database, lower_range, higher_range)
-    LOGGER.debug(f'New Instance type will be {new_instance_type}')
+    LOGGER.info(f'New Instance type will be {new_instance_type}')
 
-    LOGGER.debug(f'Creating AMI of old instance {old_instance_id} and it will take some time')
+    LOGGER.info(f'Creating AMI of old instance {old_instance_id} and it will take some time')
     new_ami_id=create_AMI(ec2,old_instance_id,ami_name=f'ami_of_{old_instance_id}',description='vertical scaling').id
     LOGGER.info(f'Successfully created the AMI {new_ami_id}')
 
-    LOGGER.debug(f'Trying to fetch config of old instance {old_instance_id}')
+    LOGGER.info(f'Trying to fetch config of old instance {old_instance_id}')
     old_instance_config=get_config_instance(ec2,old_instance_id)
     LOGGER.info(f'Successfully fetched config of old instance')
 
-    LOGGER.debug(f'Trying to create new instance type {new_instance_type} using AMI {new_ami_id}')
+    LOGGER.info(f'Trying to create new instance type {new_instance_type} using AMI {new_ami_id}')
     new_instance_id=deploy_instance(client,ec2,new_ami_id,new_instance_type,old_instance_config)
     LOGGER.info(f'Successfully created new instance {new_instance_id}')
 
-    LOGGER.debug(f'Trying to enable cloudwatch Alarm for new instance')
+    LOGGER.info(f'Trying to enable cloudwatch Alarm for new instance')
     high_alarm=enable_alarm(alarm_name=f'higher_{new_instance_id}',threshold=75,instance_id=new_instance_id,
                             arn='arn:aws:sns:us-west-1:136960521401:CPU_health_check',
                             comparison_operator='GreaterThanThreshold')
@@ -157,15 +160,15 @@ def main(event):
                               comparison_operator='LessThanThreshold')
     LOGGER.info(f'Successfully enabled high and low boundry alarm on new instance')
 
-    LOGGER.debug(f'Now trying to terminate old instance {old_instance_id}')
+    LOGGER.info(f'Now trying to terminate old instance {old_instance_id}')
     delete_instance=delete_old_instance(ec2,old_instance_id)
-    LOGGER.debug(f'Successfully deleted old instance')
+    LOGGER.info(f'Successfully deleted old instance')
 
-    LOGGER.debug(f'Now trying to delete old Alarms')
+    LOGGER.info(f'Now trying to delete old Alarms')
     old_alarms=[f'higher_{old_instance_id}',f'lower_{old_instance_id}']
     deleted_alarms=delete_alarms(old_alarms)
     LOGGER.info(f'Successfully deleted alarms {old_alarms}')
 
-    LOGGER.debug(f'Trying to delete AMI of old instance because we deployed new instance')
+    LOGGER.info(f'Trying to delete AMI of old instance because we deployed new instance')
     deleted_ami=delete_image(ec2,new_ami_id)
-    LOGGER.debug(f'Successfully deleted AMI {new_ami_id}')
+    LOGGER.info(f'Successfully deleted AMI {new_ami_id}')
